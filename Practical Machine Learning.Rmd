@@ -1,0 +1,145 @@
+---
+title: "Practical Machine Learning - Project Writeup"
+author: "Andrew Horton"
+date: "Tuesday, May 19, 2015"
+output: html_document
+---
+
+###Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+
+###Overview
+The goal of this project is to predict how unilateral dumbbell biceps curls were performed, based on data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The 5 methods of doing the curls are:
+
+A: Exactly according to the specification
+
+B: Throwing the elbows to the front
+
+C: Lifting the dumbbell only halfway
+
+D: Lowering the dumbbell only halfway
+
+E: Throwing the hips to the front
+
+###Load Libraries for Later Steps
+```{r}
+library(caret)
+library(randomForest)
+```
+
+###Inputting Data
+
+```{r cache=TRUE}
+# Download Training and Test Data Sets
+
+if (!file.exists("./pml-testing.csv")){
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+                  "./pml-testing.csv")
+}
+
+if (!file.exists("./pml-training.csv")){
+    download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+                  "./pml-training.csv")
+}
+# Import the data treating empty values as NA.
+training <- read.csv("pml-training.csv", na.strings=c("NA",""),sep=",")
+
+testing <- read.csv("pml-testing.csv", na.strings=c("NA",""),sep=",")
+
+```
+
+###Data Exploration/Cleansing
+
+Since in the import steps we treated empty values as NA's, it is important to review the variables, other than classe of course, to see if there are variables with too many NA's and should be excluded in the later predictions.
+
+```{r}
+summary(training$min_roll_arm)
+
+```
+
+The above summary focuses on one variable specifically, in part so anyone reading this doesn't have to waste time looking through all of the 150+ variables, but mainly to provide an example of a variable with too many NA's.  These types of variables will be removed with the following r code.
+
+```{r}
+NAindex <- apply(training,2,function(x) {sum(is.na(x))}) 
+training2 <- training[,which(NAindex == 0)]
+NAindex <- apply(testing,2,function(x) {sum(is.na(x))}) 
+testing2 <- testing[,which(NAindex == 0)]
+
+summary(training2$min_roll_arm)
+```
+
+As the last statement, the summary, shows, min_roll_arm was removed since it contained "too many" NAs.
+
+###Preprocessing/Removing Near Zero Variables
+```{r}
+#Preprocessing
+v <- which(lapply(training2, class) %in% "numeric")
+
+preObj <-preProcess(training2[,v],method=c('knnImpute', 'center', 'scale'))
+training3 <- predict(preObj, training2[,v])
+training3$classe <- training2$classe
+
+testing3 <-predict(preObj,testing2[,v])
+#Removing near zero variables on both the training and testing sets
+
+nzv <- nearZeroVar(training3,saveMetrics=TRUE)
+training4 <- training3[,nzv$nzv==FALSE]
+
+nzv <- nearZeroVar(testing3,saveMetrics=TRUE)
+testing4 <- testing3[,nzv$nzv==FALSE]
+
+```
+
+###Creating Test and Training Sets
+
+```{r}
+set.seed(8675309)
+inTrain <- createDataPartition(y = training4$classe, p = 0.75, list = F)
+trainData <- training4[inTrain,]
+testData <- training4[-inTrain,]
+```
+
+###Model Training
+
+With this data, we have chosen to train the model with random forest due to its highly accuracy rate (and for other reasons likes Linear Regression isn't it a fit due to the data's non-linear nature). The model is built on a training set of 28 variables out of the initial 160(28 is what is left after removing variables with high numbers of NA's and Near Zero Variables).
+
+```{r cache=TRUE}
+#Fitting Random Forest Model using the training set
+modelFit <- randomForest(classe ~., data=trainData)
+modelFit
+```
+
+As the above modelFit "print" shows, the OOB estimate of error rate is .63%.  Now let's see what the OOB error rate is after applying the model on the test set.
+
+
+```{r}
+#Running model on the test data set
+cvPred <- predict(modelFit, testData)
+confusionMatrix(cvPred, testData$classe)
+```
+
+As expected, the OOB error rate on the test is higher than that of the training set; .71%.
+
+###Predicting the Results on the Test Data
+###(The Test data that was cleansed in the same manor as the training data sets)
+
+```{r}
+testingPred <- predict(modelFit, testing4)
+testingPred
+```
+
+
+###Submissions to Coursera
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  path <- "./answers"
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=file.path(path, filename),quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(testingPred)
+```
